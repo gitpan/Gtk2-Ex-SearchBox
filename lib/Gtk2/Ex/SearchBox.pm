@@ -1,6 +1,6 @@
 package Gtk2::Ex::SearchBox;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use warnings;
 use strict;
@@ -38,6 +38,31 @@ sub signal_connect {
 sub get_model {
 	my ($self) = @_;
 	return $self->{datamodel};
+}
+
+sub set_model {
+	my ($self, $datamodel) = @_;
+	$self->{datamodel} = $datamodel;
+	$self->_populate;
+	$self->_check_list_visibility();
+}
+
+sub to_sql_condition {
+	my ($self, $fieldname, $datamodel) = @_;
+	my @condition;
+	foreach my $x (@$datamodel) {
+		if ($x->{operator} eq 'equals') {
+			push @condition, $fieldname.' = '.'\''.$x->{field}.'\'';
+		} elsif ($x->{operator} eq 'not equals') {
+			push @condition, $fieldname.' <> '.'\''.$x->{field}.'\'';
+		} elsif ($x->{operator} eq 'contains') {
+			push @condition, $fieldname.' like '.'\'%'.$x->{field}.'%\'';
+		} elsif ($x->{operator} eq 'doesn\'t contain') {
+			push @condition, $fieldname.' not ike '.'\'%'.$x->{field}.'%\'';
+		}
+	}
+	my $str = join ' or ', @condition;
+	return $str;
 }
 
 sub attach_popup_to {
@@ -298,11 +323,70 @@ search patterns).
 
 =head2 new;
 
+The constructor.
+
+	my $searchbox = Gtk2::Ex::SearchBox->new;
+
+If you want to allow only one pattern at a time, then you can call the constructor 
+with C<'single'> as an argument.
+
+	my $searchbox = Gtk2::Ex::SearchBox->new('single');
+	
+By default, the dropdown combobox contains the following choices.
+
+	[
+		'contains',
+		'doesn\'t contain',
+		'not equals',
+		'equals',
+	]
+	
+But if you want to specify your own set, then you can call the constructor with 
+two arguments.
+
+	my $operatorlist = [
+		'starts with',
+		'ends with',
+		'has in the middle'
+	];
+	my $searchbox = Gtk2::Ex::SearchBox->new('multiple', $operatorlist);
+
+If you do not want even that combobox to the left, then send undef as the operatorlist.
+
+	my $searchbox = Gtk2::Ex::SearchBox->new('single', undef);
+	
+Now this is just an C<$enty> with an C<$ok_button> !!	
+
 =head2 set_model($model);
+
+Sets the C<$model>. For example, 
+
+	$model = [
+		{'operator' => 'contains', 'field' => 'this pattern'},
+		{'operator' => 'equals', 'field' => 'that exact pattern'},
+	]
 
 =head2 get_model;
 
+Returns the C<$model>
+
+For example, 
+
+	$model = [
+		{'operator' => 'contains', 'field' => 'this pattern'},
+		{'operator' => 'equals', 'field' => 'that exact pattern'},
+	]
+
 =head2 attach_popup_to($parent);
+
+This method returns a C<Gtk2::Ex::PopupWindow>. The popup window will contain
+a C<Gtk2::Ex::SearchBox> widget.
+
+=head2 to_sql_condition($datefieldname, $model);
+
+Converts the C<$model> into an SQL condition so that it can be used directly in
+and SQL statement. C<$fieldname> is the fieldname that will be used inside
+the SQL condition.
 
 =head2 signal_connect($signal, $callback);
 

@@ -1,6 +1,6 @@
 package Gtk2::Ex::SearchBox;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use warnings;
 use strict;
@@ -10,9 +10,10 @@ use Data::Dumper;
 use Gtk2::Gdk::Keysyms;
 use Gtk2::Ex::PopupWindow;
 
-use constant OPERATOR_COLUMN => 0;
-use constant MODEL____COLUMN => 1;
-use constant NAME_____COLUMN => 2;
+use constant OR_______COLUMN => 0;
+use constant OPERATOR_COLUMN => 1;
+use constant MODEL____COLUMN => 2;
+use constant NAME_____COLUMN => 3;
 
 sub new {
 	my ($class, $type, $operatorlist) = @_;
@@ -20,7 +21,7 @@ sub new {
 	my $default_operatorlist = [
 		'contains',
 		'doesn\'t contain',
-		'not equals',
+		'not equal to',
 		'equals',
 	];
 	$self->{operatorlist} = $operatorlist || $default_operatorlist;
@@ -37,7 +38,13 @@ sub signal_connect {
 
 sub get_model {
 	my ($self) = @_;
-	return $self->{datamodel};
+	my @temp;
+	@temp = @{$self->{datamodel}} if $self->{datamodel};
+	push @temp, {
+		'operator' => $self->{operatorlist}->[$self->{operatorcombo}->get_active],
+		'field' =>	$self->{entry}->get_text,
+	} if $self->{entry}->get_text;
+	return \@temp;
 }
 
 sub set_model {
@@ -51,14 +58,15 @@ sub to_sql_condition {
 	my ($self, $fieldname, $datamodel) = @_;
 	my @condition;
 	foreach my $x (@$datamodel) {
+		next unless $x;
 		if ($x->{operator} eq 'equals') {
 			push @condition, $fieldname.' = '.'\''.$x->{field}.'\'';
-		} elsif ($x->{operator} eq 'not equals') {
+		} elsif ($x->{operator} eq 'not equal to') {
 			push @condition, $fieldname.' <> '.'\''.$x->{field}.'\'';
 		} elsif ($x->{operator} eq 'contains') {
 			push @condition, $fieldname.' like '.'\'%'.$x->{field}.'%\'';
 		} elsif ($x->{operator} eq 'doesn\'t contain') {
-			push @condition, $fieldname.' not ike '.'\'%'.$x->{field}.'%\'';
+			push @condition, $fieldname.' not like '.'\'%'.$x->{field}.'%\'';
 		}
 	}
 	my $str = join ' or ', @condition;
@@ -80,7 +88,7 @@ sub _create_widget {
 	my ($self) = @_;
 
 	my @column_types;
-	$column_types[0] = 'Glib::String';
+	$column_types[OR_______COLUMN] = 'Glib::String';
 	$column_types[OPERATOR_COLUMN] = 'Glib::String';
 	$column_types[MODEL____COLUMN] = 'Gtk2::ListStore';
 	$column_types[NAME_____COLUMN] = 'Glib::String';
@@ -90,7 +98,7 @@ sub _create_widget {
 	my $entry = Gtk2::Entry->new;
 	my $ok_button = Gtk2::Button->new_from_stock('gtk-ok');
 
-	my $add_another_button = Gtk2::Button->new('_Add Pattern');
+	my $add_another_button = Gtk2::Button->new('_Another Pattern');
 	
 	my $treemodel = Gtk2::ListStore->new (@column_types);   
 	my $treeview= Gtk2::TreeView->new($treemodel);
@@ -98,6 +106,11 @@ sub _create_widget {
 	
 	$self->{treeview}  = $treeview;
 	$self->{treemodel} = $treemodel;
+	$self->{entry} = $entry;
+	$self->{operatorcombo} = $operatorcombo;
+	$self->{add_another_button} = $add_another_button;
+	$self->{ok_button} = $ok_button;
+
 	$self->_add_combo;
 	$self->_populate;
 	$treeview->set_headers_visible(FALSE);
@@ -128,7 +141,7 @@ sub _create_widget {
 	$operatorcombo->set_active(0);
 	$operatorcombo->signal_connect('realize' =>
 		sub {
-			$treeview->get_column(0)->set_min_width(
+			$treeview->get_column(1)->set_min_width(
 				$operatorcombo->size_request->width
 			);
 			$entry->grab_focus;
@@ -149,12 +162,13 @@ sub _create_widget {
 			if ($entry->get_text) {
 				my $data = $self->{datamodel};
 				my %hash = map { $_->{field} => 1 } @$data;
-				return if $hash{$entry->get_text};
-				push @$data, {
-					'field'    => $entry->get_text,
-					'operator' => $operatorlist->[$operatorcombo->get_active],
-				};
-				$self->{datamodel} = $data;
+				unless ($hash{$entry->get_text}) {
+					push @$data, {
+						'field'    => $entry->get_text,
+						'operator' => $operatorlist->[$operatorcombo->get_active],
+					};
+					$self->{datamodel} = $data;
+				}
 				$self->_populate;
 				$self->_check_list_visibility();
 				$entry->set_text('');
@@ -243,6 +257,11 @@ sub _add_combo {
 		}
 	);
 	$treeview->insert_column_with_attributes(
+		-1, 'Fields', 
+		Gtk2::CellRendererText->new, 
+		text => OR_______COLUMN
+	);
+	$treeview->insert_column_with_attributes(
 		-1, 'Operators', 
 		$combo_renderer,
 		text  => OPERATOR_COLUMN, 
@@ -259,7 +278,6 @@ sub _populate{
 	my ($self) = @_;
 	my $treeview  = $self->{treeview};
 	my $treemodel = $self->{treemodel};
-	my $data      = $self->{datamodel};
 	my $i = 0;
 	my $operatorlist = $self->{operatorlist};
 	my %lookup_hash = map { $_ => $i++ } @$operatorlist;
@@ -268,7 +286,12 @@ sub _populate{
 		$combomodel->set($combomodel->append, 0, $key);
 	}
 	$treemodel->clear();
-	foreach my $data (@$data) {
+	return unless $self->{datamodel};
+	my @datamodel = @{$self->{datamodel}};
+	#my $first = shift @datamodel;
+	#$self->{operatorcombo}->set_active($lookup_hash{$first->{'operator'}});
+	#$self->{entry}->set_text($first->{'field'});
+	foreach my $data (@datamodel) {
 		$data->{operator} = $lookup_hash{$data->{operator}};
 		$data->{operator} = $combomodel->get(
 			$combomodel->iter_nth_child (undef, $data->{operator})
@@ -276,9 +299,10 @@ sub _populate{
 		);
 		$treemodel->set (
 			$treemodel->append,
+			OR_______COLUMN, 'or',
 			NAME_____COLUMN, $data->{field},
 			OPERATOR_COLUMN, $data->{operator},
-			MODEL____COLUMN, $combomodel 
+			MODEL____COLUMN, $combomodel,
 		);
 	}
 }
@@ -337,7 +361,7 @@ By default, the dropdown combobox contains the following choices.
 	[
 		'contains',
 		'doesn\'t contain',
-		'not equals',
+		'not equal to',
 		'equals',
 	]
 	
